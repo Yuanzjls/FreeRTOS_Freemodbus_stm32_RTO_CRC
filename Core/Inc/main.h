@@ -55,7 +55,6 @@ extern "C" {
 #include "stm32f769i_discovery_sd.h"
 #include "ff.h"
 #include "jpeg_utils.h"
-#include <decode_polling.h>
 #include "jpeg_utils.h"
 #include "FreeRTOS.h"
 #include "task.h"

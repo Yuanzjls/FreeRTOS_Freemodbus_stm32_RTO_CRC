@@ -14,7 +14,8 @@
 #include <WM.h>
 #include <stm32f769i_discovery_ts.h>
 #include <MainTask.h>
-
+#include "semphr.h"
+#include "modbus.h"
 //#include "MainTask.h"
 
 /* Private includes ----------------------------------------------------------*/
@@ -37,7 +38,7 @@
 /* Private variables ---------------------------------------------------------*/
 
 extern LTDC_HandleTypeDef hltdc_discovery;
-static DMA2D_HandleTypeDef   hdma2d;
+
 extern DSI_HandleTypeDef hdsi_discovery;
 DMA2D_HandleTypeDef Dma2dHandle;
 DSI_VidCfgTypeDef hdsivideo_handle;
@@ -56,7 +57,7 @@ DMA_HandleTypeDef            hSaiDma;
 
 RTC_HandleTypeDef hrtc;
 UART_HandleTypeDef UartHandle;
-
+DMA_HandleTypeDef hdmamemtomen;
 FIL JPEG_File;  /* File object */
 Wavheader Wheader;
 extern uint8_t volume;
@@ -80,9 +81,9 @@ const uint16_t kMatrixHeight = 480;       // known working: 16, 32, 48, 64
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 static void MX_RTC_Init(void);
-
+static void DMA_Memoryto_Memory_Init(void);
 void Uart_Send_String(uint8_t* str);
-
+void DMA_Memtomem_XFER_CPLT(DMA_HandleTypeDef *hdma);
 /* USER CODE BEGIN PFP */
 /* USER CODE END PFP */
 void vApplicationStackOverflowHook(xTaskHandle *pxTask, signed char *pcTaskName )
@@ -211,6 +212,7 @@ TaskHandle_t xTaskMusic = NULL;
 static TaskHandle_t xTaskGUI = NULL;
 static TaskHandle_t xTaskTouchEx = NULL;
 static TaskHandle_t xTaskUart = NULL;
+static SemaphoreHandle_t xDMASemaphore;
 static void vTaskVolume(void *pvParameters)
 {
   UBaseType_t  priority;
@@ -408,24 +410,71 @@ void vTaskGUI(void *pvParameters)
 {
 	MainTask();
 }
-uint8_t uart_receive[10];
+uint8_t uart_receive[300];
+//uint8_t uart_send[300];
+CRC_HandleTypeDef hcrc;
 void vTaskUart(void * pvParameters)
 {
-	HAL_UART_Receive_DMA(&UartHandle, uart_receive, 10);
+	uint32_t ulNotifiedValue;
+	uint16_t uCRCValue;
+	hcrc.Instance = CRC;
+	hcrc.Init.DefaultPolynomialUse = DEFAULT_POLYNOMIAL_DISABLE;
+	hcrc.Init.DefaultInitValueUse = DEFAULT_INIT_VALUE_DISABLE;
+	hcrc.Init.InputDataInversionMode = CRC_INPUTDATA_INVERSION_BYTE;
+	hcrc.Init.OutputDataInversionMode = CRC_OUTPUTDATA_INVERSION_ENABLE;
+	hcrc.Init.GeneratingPolynomial = 0x8005;
+	hcrc.Init.CRCLength = CRC_POLYLENGTH_16B;
+	hcrc.Init.InitValue = 0xffff;
+	hcrc.InputDataFormat = CRC_INPUTDATA_FORMAT_BYTES;
+	if (HAL_CRC_Init(&hcrc) != HAL_OK)
+	{
+		Error_Handler();
+	}
+	modbus_init(17, uart_receive);
+	DMA_Memoryto_Memory_Init();
+	xDMASemaphore = xSemaphoreCreateBinary();
+	HAL_UART_Receive_DMA(&UartHandle, uart_receive, 300);
 	while(1)
 	{
-		if (UartHandle.gState == HAL_UART_STATE_READY)
+		xTaskNotifyWait(0, 0xffffffff, &ulNotifiedValue, portMAX_DELAY);
+		if (ulNotifiedValue )
 		{
-			Uart_Send_String((uint8_t*)"Hello World\r\n");
+			//modbus_parse(ulNotifiedValue);
+			__HAL_CRC_DR_RESET(&hcrc);
+			HAL_DMA_Start_IT(&hdmamemtomen, (uint32_t)uart_receive, 0x40023000,ulNotifiedValue-2);
+			xSemaphoreTake( xDMASemaphore, ( TickType_t ) portMAX_DELAY);
+			uCRCValue = CRC->DR;
+			if (uCRCValue == ((uart_receive[ulNotifiedValue-1] << 8) + uart_receive[ulNotifiedValue-2]))
+			{
+				if (modbus_parse((uint16_t *)&ulNotifiedValue)==0)
+				{
+					//ulNotifiedValue++;
+					__HAL_CRC_DR_RESET(&hcrc);
+					HAL_DMA_Start_IT(&hdmamemtomen, (uint32_t)uart_receive, 0x40023000,ulNotifiedValue);
+					xSemaphoreTake( xDMASemaphore, ( TickType_t ) portMAX_DELAY);
+					uCRCValue = CRC->DR;
+					uart_receive[ulNotifiedValue] = uCRCValue & 0xff;
+					uart_receive[ulNotifiedValue+1] = (uCRCValue & 0xff00) >> 8;
+					HAL_UART_Transmit_DMA(&UartHandle, uart_receive, ulNotifiedValue+2);
+				}
+				else
+				{
+					continue;
+				}
+			}
+			else
+			{
+				continue;
+			}
+
 		}
-		vTaskDelay(1000);
 	}
 }
 //higher number, higher priority
 static void AppTaskCreate(void)
 {
-  xTaskCreate(vTaskVolume, "TaskVolume", 512, NULL, 3, &xTaskVolume);
-  xTaskCreate(vTaskMusic, "TaskMusic", 2048, NULL, 4, &xTaskMusic);
+//  xTaskCreate(vTaskVolume, "TaskVolume", 512, NULL, 3, &xTaskVolume);
+//  xTaskCreate(vTaskMusic, "TaskMusic", 2048, NULL, 4, &xTaskMusic);
   xTaskCreate(vTaskGUI, "TaskGUI", 10240, NULL, 1, &xTaskGUI);
   xTaskCreate(vTaskTouchEx, "TaskTouchEx", 512, NULL, 2, &xTaskTouchEx);
   xTaskCreate(vTaskUart, "TaskUart", 512, NULL, 2, &xTaskUart);
@@ -577,13 +626,6 @@ int main(void)
 
 	  /* Init the HAL JPEG driver */
 	   //JPEG_Handle.Instance = JPEG;
-
-
-
-
-
-
-
 	   	UartHandle.Instance        = USARTx;
 	    UartHandle.Init.BaudRate   = 115200;
 	    UartHandle.Init.WordLength = UART_WORDLENGTH_9B;
@@ -641,6 +683,42 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 		portYIELD_FROM_ISR( xHigherPriorityTaskWoken);
 	}
 }
+/*
+ * @brief DMA memory to meory configuration
+ * @retval None
+ *
+ */
+void DMA_Memoryto_Memory_Init(void)
+{
+	/* DMA controller clock enable */
+	  __HAL_RCC_DMA2_CLK_ENABLE();
+
+	  /* Configure DMA request hdma_memtomem_dma2_stream0 on DMA2_Stream0 */
+	  hdmamemtomen.Instance = DMA2_Stream1;
+	  hdmamemtomen.Init.Channel = DMA_CHANNEL_0;
+	  hdmamemtomen.Init.Direction = DMA_MEMORY_TO_MEMORY;
+	  hdmamemtomen.Init.PeriphInc = DMA_PINC_ENABLE;
+	  hdmamemtomen.Init.MemInc = DMA_MINC_DISABLE;
+	  hdmamemtomen.Init.PeriphDataAlignment = DMA_PDATAALIGN_BYTE;
+	  hdmamemtomen.Init.MemDataAlignment = DMA_MDATAALIGN_BYTE;
+	  hdmamemtomen.Init.Mode = DMA_NORMAL;
+	  hdmamemtomen.Init.Priority = DMA_PRIORITY_LOW;
+	  hdmamemtomen.Init.FIFOMode = DMA_FIFOMODE_ENABLE;
+	  hdmamemtomen.Init.FIFOThreshold = DMA_FIFO_THRESHOLD_FULL;
+	  hdmamemtomen.Init.MemBurst = DMA_MBURST_SINGLE;
+	  hdmamemtomen.Init.PeriphBurst = DMA_PBURST_SINGLE;
+	  if (HAL_DMA_Init(&hdmamemtomen) != HAL_OK)
+	  {
+	    Error_Handler( );
+	  }
+	  HAL_DMA_RegisterCallback(&hdmamemtomen, HAL_DMA_XFER_CPLT_CB_ID, DMA_Memtomem_XFER_CPLT);
+	  /* DMA interrupt init */
+	  /* DMA2_Stream0_IRQn interrupt configuration */
+	  HAL_NVIC_SetPriority(DMA2_Stream1_IRQn, 3, 1);
+	  HAL_NVIC_EnableIRQ(DMA2_Stream1_IRQn);
+
+}
+
 /**
   * @brief System Clock Configuration
   * @retval None
@@ -887,6 +965,45 @@ void HAL_SAI_TxHalfCpltCallback(SAI_HandleTypeDef *hsai)
 {
 	BSP_AUDIO_OUT_HalfTransfer_CallBack();
 }
+
+/* */
+void Uart_ReceivedTimeoutCallback(unsigned int length)
+{
+	  /* Manage the remaining file size and new address offset: This function
+	     should be coded by user (its prototype is already declared in stm32f769i_discovery_audio.h) */
+		//f_read(&fi, &buff[0], block_size, &len);
+	  BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+
+	  /* Notify the task that the transmission is complete. */
+	  xTaskNotifyFromISR( xTaskUart, length, eSetValueWithOverwrite, &xHigherPriorityTaskWoken );
+
+
+	  /* If xHigherPriorityTaskWoken is now set to pdTRUE then a context switch
+	  should be performed to ensure the interrupt returns directly to the highest
+	  priority task.  The macro used for this purpose is dependent on the port in
+	  use and may be called portEND_SWITCHING_ISR(). */
+	  portYIELD_FROM_ISR( xHigherPriorityTaskWoken );
+}
+void DMA_Memtomem_XFER_CPLT(DMA_HandleTypeDef *hdma)
+{
+	BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+
+	/* At this point xTaskToNotify should not be NULL as a transmission was
+	in progress. */
+	//configASSERT( xTaskToNotify != NULL );
+
+	/* Notify the task that the transmission is complete. */
+	//vTaskNotifyGiveFromISR( xTaskToNotify, &xHigherPriorityTaskWoken );
+	xSemaphoreGiveFromISR( xDMASemaphore, &xHigherPriorityTaskWoken );
+	/* There are no transmissions in progress, so no tasks to notify. */
+	//xTaskToNotify = NULL;
+
+	/* If xHigherPriorityTaskWoken is now set to pdTRUE then a context switch
+	should be performed to ensure the interrupt returns directly to the highest
+	priority task.  The macro used for this purpose is dependent on the port in
+	use and may be called portEND_SWITCHING_ISR(). */
+	portYIELD_FROM_ISR( xHigherPriorityTaskWoken );
+}
 /**
   * @brief  Rx Transfer completed callback
   * @param  huart: UART handle
@@ -894,12 +1011,12 @@ void HAL_SAI_TxHalfCpltCallback(SAI_HandleTypeDef *hsai)
   *         you can add your own implementation.
   * @retval None
   */
-void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
-{
-  /* Turn LED4 on: Transfer in reception process is correct */
-	BSP_LED_Toggle(LED1);
-//	HAL_UART_Receive_DMA(&UartHandle, uart_receive, 10);
-}
+//void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
+//{
+//  /* Turn LED4 on: Transfer in reception process is correct */
+//	BSP_LED_Toggle(LED1);
+////	HAL_UART_Receive_DMA(&UartHandle, uart_receive, 10);
+//}
 
 #ifdef  USE_FULL_ASSERT
 /**

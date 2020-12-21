@@ -78,6 +78,7 @@ extern LTDC_HandleTypeDef hltdc;
 extern DSI_HandleTypeDef hdsi;
 extern UART_HandleTypeDef UartHandle;
 extern SD_HandleTypeDef uSdHandle;
+extern DMA_HandleTypeDef hdmamemtomen;
 /* USER CODE BEGIN EV */
 
 /* USER CODE END EV */
@@ -296,8 +297,20 @@ void USARTx_DMA_RX_IRQHandler(void)
 {
   HAL_DMA_IRQHandler(UartHandle.hdmarx);
 }
+extern uint8_t uart_receive[300];
 void USART1_IRQHandler(void)
 {
+  unsigned int length;
+  /* Timeout interruption triggered*/
+  if (READ_BIT(UartHandle.Instance->ISR,USART_ISR_RTOF))
+  {
+	  length = 300 - __HAL_DMA_GET_COUNTER(UartHandle.hdmarx);
+	  /* Clear the timeout flag*/
+	  SET_BIT(UartHandle.Instance->ICR,USART_ICR_RTOCF);
+	  HAL_UART_DMAStop(&UartHandle);
+	  HAL_UART_Receive_DMA(&UartHandle, uart_receive, 300);
+	  Uart_ReceivedTimeoutCallback(length);
+  }
   HAL_UART_IRQHandler(&UartHandle);
 }
 /* USER CODE BEGIN 1 */
@@ -306,6 +319,19 @@ void DMA2_Stream0_IRQHandler(void)
   HAL_DMA_IRQHandler(uSdHandle.hdmarx);
 }
 
+/**
+  * @brief This function handles DMA2 stream0 global interrupt.
+  */
+void DMA2_Stream1_IRQHandler(void)
+{
+  /* USER CODE BEGIN DMA2_Stream0_IRQn 0 */
+
+  /* USER CODE END DMA2_Stream0_IRQn 0 */
+  HAL_DMA_IRQHandler(&hdmamemtomen);
+  /* USER CODE BEGIN DMA2_Stream0_IRQn 1 */
+
+  /* USER CODE END DMA2_Stream0_IRQn 1 */
+}
 /**
   * @brief  This function handles DMA2 Stream 6 interrupt request.
   * @param  None

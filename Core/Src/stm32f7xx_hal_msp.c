@@ -651,7 +651,7 @@ void HAL_UART_MspInit(UART_HandleTypeDef *huart)
 	  hdma_rx.Init.MemInc              = DMA_MINC_ENABLE;
 	  hdma_rx.Init.PeriphDataAlignment = DMA_PDATAALIGN_BYTE;
 	  hdma_rx.Init.MemDataAlignment    = DMA_MDATAALIGN_BYTE;
-	  hdma_rx.Init.Mode                = DMA_CIRCULAR;
+	  hdma_rx.Init.Mode                = DMA_NORMAL;
 	  hdma_rx.Init.Priority            = DMA_PRIORITY_HIGH;
 	  hdma_rx.Init.FIFOMode            = DMA_FIFOMODE_DISABLE;
 	  hdma_rx.Init.FIFOThreshold       = DMA_FIFO_THRESHOLD_FULL;
@@ -663,6 +663,15 @@ void HAL_UART_MspInit(UART_HandleTypeDef *huart)
 	  /* Associate the initialized DMA handle to the the UART handle */
 	  __HAL_LINKDMA(huart, hdmarx, hdma_rx);
 
+	  /* Enable receive timeout function*/
+	  SET_BIT(huart->Instance->CR2,USART_CR2_RTOEN);
+
+	  /* Enable timeout receive interrupt*/
+	  SET_BIT(huart->Instance->CR1,USART_CR1_RTOIE);
+
+	  /* Fill the RTOR register with the length of timeout required, in units of a baud duration*/
+	  WRITE_REG(huart->Instance->RTOR, 32);
+
 	  /*##-4- Configure the NVIC for DMA #########################################*/
 	  /* NVIC configuration for DMA transfer complete interrupt (USARTx_TX) */
 	  HAL_NVIC_SetPriority(USARTx_DMA_TX_IRQn, 0, 1);
@@ -673,7 +682,7 @@ void HAL_UART_MspInit(UART_HandleTypeDef *huart)
 	  HAL_NVIC_EnableIRQ(USARTx_DMA_RX_IRQn);
 
 	  /* NVIC configuration for USART, to catch the TX complete */
-	  HAL_NVIC_SetPriority(USARTx_IRQn, 0, 1);
+	  HAL_NVIC_SetPriority(USARTx_IRQn, 3, 0);
 	  HAL_NVIC_EnableIRQ(USARTx_IRQn);
 }
 

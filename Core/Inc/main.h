@@ -159,7 +159,7 @@ extern "C" {
 
 /* Exported functions prototypes ---------------------------------------------*/
 void Error_Handler(void);
-
+void Uart_ReceivedTimeoutCallback(unsigned int length);
 /* USER CODE BEGIN EFP */
 
 /* USER CODE END EFP */

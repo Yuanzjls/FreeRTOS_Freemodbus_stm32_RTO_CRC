@@ -27,7 +27,8 @@ Because RTO is used in this project, I don't need the whole Freemodbus framework
 ## Result
 
 ![communicate with PC software](result.png)
-Left side is the message (hex form) from PC sending to stm32, and the right side is the message stm32 send back to PC. 
+
+<br>Left side is the message (hex form) from PC sending to stm32, and the right side is the message stm32 send back to PC. 
 
 ## Todo
 

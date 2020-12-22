@@ -10,4 +10,6 @@ In this section I will explain how to use uart with DMA to send and receive data
 
 I set uart baud width as 115200 bits/second, stopbit 1 and parity check as odd. Be careful here, the word length is set 9 bits, this 9 bits is 8 bits plus parity bit. For DMA part, I use normal mode, the address of peripheral is fixed, and the address of memory will increase at end of every DMA cycle. After initialize and link the uart and dma peripheral, just call __HAL_UART_Receive_DMA(UART_HandleTypeDef *huart, uint8_t *pData, uint16_t Size)__ to send data by DMA.
 
+### UART DMA RECEIVE
 
+The DMA receiving scenario is different from sending. Every time uart sense data comes in, dma will automatically move data into destination, and not trigger interrupt. The interrupt will only be triggered when the waiting time is over 32 bits (9 bits * 3.5 = 31.5 bits $\approx$ 32 bits)

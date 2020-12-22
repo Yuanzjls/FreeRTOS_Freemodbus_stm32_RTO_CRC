@@ -12,4 +12,5 @@ I set uart baud width as 115200 bits/second, stopbit 1 and parity check as odd. 
 
 ### UART DMA RECEIVE
 
-The DMA receiving scenario is different from sending. Every time uart sense data comes in, dma will automatically move data into destination, and not trigger interrupt. The interrupt will only be triggered when the waiting time is over 32 bits (9 bits * 3.5 = 31.5 bits $\approx$ 32 bits)
+The DMA receiving scenario is different from sending. Every time uart sense data comes in, dma will automatically move data into destination, and not trigger interrupt. The interrupt will only be triggered when the waiting time is over 32 bits (9 bits * 3.5 = 31.5 bits round to 32 bits). In the UART RTO interrupt, the CPU will send a signal to tell the modbus task that a frame is ready. As timeout receiving is automatically done by hardware, programmer does not have to worry about write a timer interrupt to judge whether a frame is ready or not. here is a flow chart shows difference between with RTO and without RTO.
+<img src="./RTO.bmp">
